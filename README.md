@@ -60,6 +60,8 @@ print(obj)  # {'name': 'Ana', 'age': 30, 'active': True}
 | `Decimal` | `Decimal("99.99")` |
 | `UUID` | `UUID("...")` |
 | `Enum` | `Color.RED` |
+| `dataclass` | `@dataclass class User` |
+| `NamedTuple` | `class Point(NamedTuple)` |
 
 ### Python types
 
@@ -82,6 +84,91 @@ restored = fastpack.unpack(data)
 
 assert restored["id"] == order["id"]
 assert restored["amount"] == order["amount"]
+```
+
+### Dataclasses
+
+```python
+from dataclasses import dataclass
+import fastpack
+
+@dataclass
+class User:
+    name: str
+    age: int
+
+user = User("Ana", 30)
+data = fastpack.pack(user)
+restored = fastpack.unpack(data)
+
+print(restored)
+# {'__dataclass__': 'User', '__module__': '__main__', 'name': 'Ana', 'age': 30}
+```
+
+### NamedTuples
+
+```python
+from typing import NamedTuple
+import fastpack
+
+class Point(NamedTuple):
+    x: int
+    y: int
+
+point = Point(10, 20)
+data = fastpack.pack(point)
+restored = fastpack.unpack(data)
+
+print(restored)
+# {'__namedtuple__': 'Point', '__module__': '__main__', 'x': 10, 'y': 20}
+```
+
+### Custom types
+
+Use `@fastpack.register` to add support for your own types:
+
+```python
+import fastpack
+
+@fastpack.register
+class Money:
+    def __init__(self, amount: int, currency: str):
+        self.amount = amount
+        self.currency = currency
+
+    def __fastpack_encode__(self):
+        return {"amount": self.amount, "currency": self.currency}
+
+    @classmethod
+    def __fastpack_decode__(cls, data):
+        return cls(data["amount"], data["currency"])
+
+money = Money(1000, "USD")
+data = fastpack.pack(money)
+restored = fastpack.unpack(data)
+
+print(restored)  # Money(amount=1000, currency='USD')
+```
+
+For dataclasses and NamedTuples, registration enables automatic reconstruction:
+
+```python
+from dataclasses import dataclass
+import fastpack
+
+@fastpack.register
+@dataclass
+class Point3D:
+    x: float
+    y: float
+    z: float
+
+point = Point3D(1.0, 2.0, 3.0)
+data = fastpack.pack(point)
+restored = fastpack.unpack(data)
+
+print(type(restored))  # <class 'Point3D'>
+print(restored)        # Point3D(x=1.0, y=2.0, z=3.0)
 ```
 
 ### Nested structures
@@ -166,16 +253,16 @@ hatch run test:run
 - pack/unpack API
 - Zero dependencies
 
-### v0.2.0 — Python types (current)
+### v0.2.0 — Python types
 - datetime, date, time, timedelta
 - Decimal, UUID
 - set, tuple, frozenset
 - Enum support
 
-### v0.3.0 — Extensibility
+### v0.3.0 — Extensibility (current)
 - `@fastpack.register` for custom types
 - Native dataclass support
-- Native Pydantic support
+- Native NamedTuple support
 
 ### v0.4.0 — Streaming
 - `pack_stream` / `unpack_stream`

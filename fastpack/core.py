@@ -5,11 +5,14 @@ Binary format based on MessagePack specification for interoperability.
 """
 
 import struct
+from dataclasses import is_dataclass, fields
 from datetime import datetime, date, time, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Type
 from uuid import UUID
+
+from fastpack import types as _types
 
 
 # Format markers (MessagePack compatible)
@@ -47,7 +50,7 @@ _EXT8 = 0xC7
 _EXT16 = 0xC8
 _EXT32 = 0xC9
 
-# Custom extension type codes
+# Custom extension type codes (built-in)
 _EXT_DATETIME = 0x01
 _EXT_DATE = 0x02
 _EXT_TIME = 0x03
@@ -58,6 +61,9 @@ _EXT_SET = 0x07
 _EXT_TUPLE = 0x08
 _EXT_FROZENSET = 0x09
 _EXT_ENUM = 0x0A
+_EXT_DATACLASS = 0x0B
+_EXT_NAMEDTUPLE = 0x0C
+_EXT_CUSTOM = 0x0D  # For registered custom types
 
 
 def pack(obj: Any) -> bytes:
@@ -146,6 +152,13 @@ def _pack_value(obj: Any, buffer: bytearray) -> None:
     elif isinstance(obj, UUID):
         _pack_uuid(obj, buffer)
 
+    elif _types.is_registered(type(obj)):
+        # Registered types take priority over built-in handling
+        _pack_registered(obj, buffer)
+
+    elif _is_namedtuple(obj):
+        _pack_namedtuple(obj, buffer)
+
     elif isinstance(obj, tuple):
         _pack_tuple(obj, buffer)
 
@@ -160,6 +173,9 @@ def _pack_value(obj: Any, buffer: bytearray) -> None:
 
     elif isinstance(obj, dict):
         _pack_dict(obj, buffer)
+
+    elif is_dataclass(obj) and not isinstance(obj, type):
+        _pack_dataclass(obj, buffer)
 
     else:
         raise TypeError(f"Unsupported type: {type(obj).__name__}")
@@ -382,6 +398,62 @@ def _pack_enum(value: Enum, buffer: bytearray) -> None:
     items_buffer = bytearray()
     _pack_dict(enum_data, items_buffer)
     _pack_ext(_EXT_ENUM, bytes(items_buffer), buffer)
+
+
+def _is_namedtuple(obj: Any) -> bool:
+    """Check if an object is a NamedTuple instance."""
+    return (
+        isinstance(obj, tuple)
+        and hasattr(type(obj), "_fields")
+        and hasattr(type(obj), "_asdict")
+    )
+
+
+def _pack_namedtuple(value: Any, buffer: bytearray) -> None:
+    """Pack a NamedTuple as {__namedtuple__: class_name, **fields}."""
+    data = {
+        "__namedtuple__": type(value).__name__,
+        "__module__": type(value).__module__,
+        **value._asdict(),
+    }
+    items_buffer = bytearray()
+    _pack_dict(data, items_buffer)
+    _pack_ext(_EXT_NAMEDTUPLE, bytes(items_buffer), buffer)
+
+
+def _pack_dataclass(value: Any, buffer: bytearray) -> None:
+    """Pack a dataclass as {__dataclass__: class_name, **fields}."""
+    data = {
+        "__dataclass__": type(value).__name__,
+        "__module__": type(value).__module__,
+    }
+    for field in fields(value):
+        data[field.name] = getattr(value, field.name)
+
+    items_buffer = bytearray()
+    _pack_dict(data, items_buffer)
+    _pack_ext(_EXT_DATACLASS, bytes(items_buffer), buffer)
+
+
+def _pack_registered(value: Any, buffer: bytearray) -> None:
+    """Pack a registered custom type."""
+    encoder_info = _types.get_encoder(type(value))
+    if encoder_info is None:
+        raise TypeError(f"Type {type(value).__name__} is not registered")
+
+    type_code, encode_fn = encoder_info
+    encoded_data = encode_fn(value)
+
+    # Pack the encoded data as a dict with type info
+    data = {
+        "__custom__": type(value).__name__,
+        "__module__": type(value).__module__,
+        "__type_code__": type_code,
+        "data": encoded_data,
+    }
+    items_buffer = bytearray()
+    _pack_dict(data, items_buffer)
+    _pack_ext(_EXT_CUSTOM, bytes(items_buffer), buffer)
 
 
 def _unpack_value(data: bytes, offset: int) -> tuple[Any, int]:
@@ -617,6 +689,41 @@ def _unpack_ext(type_code: int, data: bytes) -> Any:
             "class": enum_data["class"],
             "name": enum_data["name"],
             "value": enum_data["value"],
+        }
+
+    if type_code == _EXT_DATACLASS:
+        dc_data, _ = _unpack_value(data, 0)
+        # Return as dict with dataclass info (cannot reconstruct without class)
+        return {
+            "__dataclass__": dc_data.pop("__dataclass__"),
+            "__module__": dc_data.pop("__module__"),
+            **dc_data,
+        }
+
+    if type_code == _EXT_NAMEDTUPLE:
+        nt_data, _ = _unpack_value(data, 0)
+        # Return as dict with namedtuple info (cannot reconstruct without class)
+        return {
+            "__namedtuple__": nt_data.pop("__namedtuple__"),
+            "__module__": nt_data.pop("__module__"),
+            **nt_data,
+        }
+
+    if type_code == _EXT_CUSTOM:
+        custom_data, _ = _unpack_value(data, 0)
+        registered_type_code = custom_data["__type_code__"]
+
+        # Try to decode using registered decoder
+        decoder_info = _types.get_decoder(registered_type_code)
+        if decoder_info is not None:
+            _, decode_fn = decoder_info
+            return decode_fn(custom_data["data"])
+
+        # Return as dict if decoder not found
+        return {
+            "__custom__": custom_data["__custom__"],
+            "__module__": custom_data["__module__"],
+            "data": custom_data["data"],
         }
 
     raise ValueError(f"Unknown extension type: {type_code}")
