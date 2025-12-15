@@ -50,6 +50,39 @@ print(obj)  # {'name': 'Ana', 'age': 30, 'active': True}
 | `bytes` | `b"\x00\x01"` |
 | `list` | `[1, 2, 3]` |
 | `dict` | `{"key": "value"}` |
+| `tuple` | `(1, 2, 3)` |
+| `set` | `{1, 2, 3}` |
+| `frozenset` | `frozenset([1, 2])` |
+| `datetime` | `datetime(2024, 1, 1)` |
+| `date` | `date(2024, 1, 1)` |
+| `time` | `time(12, 30)` |
+| `timedelta` | `timedelta(days=1)` |
+| `Decimal` | `Decimal("99.99")` |
+| `UUID` | `UUID("...")` |
+| `Enum` | `Color.RED` |
+
+### Python types
+
+```python
+from datetime import datetime
+from decimal import Decimal
+from uuid import UUID
+import fastpack
+
+order = {
+    "id": UUID("12345678-1234-5678-1234-567812345678"),
+    "amount": Decimal("99.99"),
+    "created_at": datetime(2024, 12, 15, 14, 30, 0),
+    "tags": {"new", "featured"},
+    "items": (1, 2, 3),
+}
+
+data = fastpack.pack(order)
+restored = fastpack.unpack(data)
+
+assert restored["id"] == order["id"]
+assert restored["amount"] == order["amount"]
+```
 
 ### Nested structures
 
@@ -128,12 +161,12 @@ hatch run test:run
 
 ## Roadmap
 
-### v0.1.0 — MVP (current)
+### v0.1.0 — MVP
 - Basic types: int, float, str, bytes, bool, None, list, dict
 - pack/unpack API
 - Zero dependencies
 
-### v0.2.0 — Python types
+### v0.2.0 — Python types (current)
 - datetime, date, time, timedelta
 - Decimal, UUID
 - set, tuple, frozenset

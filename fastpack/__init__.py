@@ -11,5 +11,5 @@ Usage:
 
 from fastpack.core import pack, unpack
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["pack", "unpack"]

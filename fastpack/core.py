@@ -5,7 +5,11 @@ Binary format based on MessagePack specification for interoperability.
 """
 
 import struct
+from datetime import datetime, date, time, timedelta
+from decimal import Decimal
+from enum import Enum
 from typing import Any
+from uuid import UUID
 
 
 # Format markers (MessagePack compatible)
@@ -33,20 +37,39 @@ _ARRAY32 = 0xDD
 _MAP16 = 0xDE
 _MAP32 = 0xDF
 
+# Extension format markers
+_FIXEXT1 = 0xD4
+_FIXEXT2 = 0xD5
+_FIXEXT4 = 0xD6
+_FIXEXT8 = 0xD7
+_FIXEXT16 = 0xD8
+_EXT8 = 0xC7
+_EXT16 = 0xC8
+_EXT32 = 0xC9
+
+# Custom extension type codes
+_EXT_DATETIME = 0x01
+_EXT_DATE = 0x02
+_EXT_TIME = 0x03
+_EXT_TIMEDELTA = 0x04
+_EXT_DECIMAL = 0x05
+_EXT_UUID = 0x06
+_EXT_SET = 0x07
+_EXT_TUPLE = 0x08
+_EXT_FROZENSET = 0x09
+_EXT_ENUM = 0x0A
+
 
 def pack(obj: Any) -> bytes:
     """
     Serialize a Python object to binary format.
 
     Supported types:
-        - None
-        - bool
-        - int
-        - float
-        - str
-        - bytes
-        - list
-        - dict (with string keys)
+        - None, bool, int, float, str, bytes
+        - list, dict, tuple, set, frozenset
+        - datetime, date, time, timedelta
+        - Decimal, UUID
+        - Enum
 
     Args:
         obj: The Python object to serialize.
@@ -90,6 +113,9 @@ def _pack_value(obj: Any, buffer: bytearray) -> None:
     elif obj is False:
         buffer.append(_FALSE)
 
+    elif isinstance(obj, Enum):
+        _pack_enum(obj, buffer)
+
     elif isinstance(obj, int):
         _pack_int(obj, buffer)
 
@@ -101,6 +127,33 @@ def _pack_value(obj: Any, buffer: bytearray) -> None:
 
     elif isinstance(obj, bytes):
         _pack_bytes(obj, buffer)
+
+    elif isinstance(obj, datetime):
+        _pack_datetime(obj, buffer)
+
+    elif isinstance(obj, date):
+        _pack_date(obj, buffer)
+
+    elif isinstance(obj, time):
+        _pack_time(obj, buffer)
+
+    elif isinstance(obj, timedelta):
+        _pack_timedelta(obj, buffer)
+
+    elif isinstance(obj, Decimal):
+        _pack_decimal(obj, buffer)
+
+    elif isinstance(obj, UUID):
+        _pack_uuid(obj, buffer)
+
+    elif isinstance(obj, tuple):
+        _pack_tuple(obj, buffer)
+
+    elif isinstance(obj, frozenset):
+        _pack_frozenset(obj, buffer)
+
+    elif isinstance(obj, set):
+        _pack_set(obj, buffer)
 
     elif isinstance(obj, list):
         _pack_list(obj, buffer)
@@ -227,6 +280,110 @@ def _pack_dict(value: dict, buffer: bytearray) -> None:
         _pack_value(v, buffer)
 
 
+def _pack_ext(type_code: int, data: bytes, buffer: bytearray) -> None:
+    """Pack an extension type value."""
+    length = len(data)
+
+    if length == 1:
+        buffer.append(_FIXEXT1)
+        buffer.append(type_code)
+    elif length == 2:
+        buffer.append(_FIXEXT2)
+        buffer.append(type_code)
+    elif length == 4:
+        buffer.append(_FIXEXT4)
+        buffer.append(type_code)
+    elif length == 8:
+        buffer.append(_FIXEXT8)
+        buffer.append(type_code)
+    elif length == 16:
+        buffer.append(_FIXEXT16)
+        buffer.append(type_code)
+    elif length <= 0xFF:
+        buffer.append(_EXT8)
+        buffer.append(length)
+        buffer.append(type_code)
+    elif length <= 0xFFFF:
+        buffer.append(_EXT16)
+        buffer.extend(struct.pack(">H", length))
+        buffer.append(type_code)
+    else:
+        buffer.append(_EXT32)
+        buffer.extend(struct.pack(">I", length))
+        buffer.append(type_code)
+
+    buffer.extend(data)
+
+
+def _pack_datetime(value: datetime, buffer: bytearray) -> None:
+    """Pack a datetime value as ISO format string."""
+    data = value.isoformat().encode("utf-8")
+    _pack_ext(_EXT_DATETIME, data, buffer)
+
+
+def _pack_date(value: date, buffer: bytearray) -> None:
+    """Pack a date value as ISO format string."""
+    data = value.isoformat().encode("utf-8")
+    _pack_ext(_EXT_DATE, data, buffer)
+
+
+def _pack_time(value: time, buffer: bytearray) -> None:
+    """Pack a time value as ISO format string."""
+    data = value.isoformat().encode("utf-8")
+    _pack_ext(_EXT_TIME, data, buffer)
+
+
+def _pack_timedelta(value: timedelta, buffer: bytearray) -> None:
+    """Pack a timedelta value as total seconds (float)."""
+    data = struct.pack(">d", value.total_seconds())
+    _pack_ext(_EXT_TIMEDELTA, data, buffer)
+
+
+def _pack_decimal(value: Decimal, buffer: bytearray) -> None:
+    """Pack a Decimal value as string."""
+    data = str(value).encode("utf-8")
+    _pack_ext(_EXT_DECIMAL, data, buffer)
+
+
+def _pack_uuid(value: UUID, buffer: bytearray) -> None:
+    """Pack a UUID value as 16 bytes."""
+    _pack_ext(_EXT_UUID, value.bytes, buffer)
+
+
+def _pack_set(value: set, buffer: bytearray) -> None:
+    """Pack a set value as an array."""
+    items_buffer = bytearray()
+    _pack_list(list(value), items_buffer)
+    _pack_ext(_EXT_SET, bytes(items_buffer), buffer)
+
+
+def _pack_tuple(value: tuple, buffer: bytearray) -> None:
+    """Pack a tuple value as an array."""
+    items_buffer = bytearray()
+    _pack_list(list(value), items_buffer)
+    _pack_ext(_EXT_TUPLE, bytes(items_buffer), buffer)
+
+
+def _pack_frozenset(value: frozenset, buffer: bytearray) -> None:
+    """Pack a frozenset value as an array."""
+    items_buffer = bytearray()
+    _pack_list(list(value), items_buffer)
+    _pack_ext(_EXT_FROZENSET, bytes(items_buffer), buffer)
+
+
+def _pack_enum(value: Enum, buffer: bytearray) -> None:
+    """Pack an Enum value as [module, class, name, value]."""
+    enum_data = {
+        "module": type(value).__module__,
+        "class": type(value).__name__,
+        "name": value.name,
+        "value": value.value,
+    }
+    items_buffer = bytearray()
+    _pack_dict(enum_data, items_buffer)
+    _pack_ext(_EXT_ENUM, bytes(items_buffer), buffer)
+
+
 def _unpack_value(data: bytes, offset: int) -> tuple[Any, int]:
     """Unpack a single value from the data at the given offset."""
     if offset >= len(data):
@@ -351,6 +508,45 @@ def _unpack_value(data: bytes, offset: int) -> tuple[Any, int]:
         offset += 4
         return _unpack_map(data, offset, length)
 
+    # Extension types (fixext)
+    if marker == _FIXEXT1:
+        type_code = data[offset]
+        offset += 1
+        return _unpack_ext(type_code, data[offset:offset + 1]), offset + 1
+    if marker == _FIXEXT2:
+        type_code = data[offset]
+        offset += 1
+        return _unpack_ext(type_code, data[offset:offset + 2]), offset + 2
+    if marker == _FIXEXT4:
+        type_code = data[offset]
+        offset += 1
+        return _unpack_ext(type_code, data[offset:offset + 4]), offset + 4
+    if marker == _FIXEXT8:
+        type_code = data[offset]
+        offset += 1
+        return _unpack_ext(type_code, data[offset:offset + 8]), offset + 8
+    if marker == _FIXEXT16:
+        type_code = data[offset]
+        offset += 1
+        return _unpack_ext(type_code, data[offset:offset + 16]), offset + 16
+
+    # Extension types (ext8/16/32)
+    if marker == _EXT8:
+        length = data[offset]
+        type_code = data[offset + 1]
+        offset += 2
+        return _unpack_ext(type_code, data[offset:offset + length]), offset + length
+    if marker == _EXT16:
+        length = struct.unpack(">H", data[offset:offset + 2])[0]
+        type_code = data[offset + 2]
+        offset += 3
+        return _unpack_ext(type_code, data[offset:offset + length]), offset + length
+    if marker == _EXT32:
+        length = struct.unpack(">I", data[offset:offset + 4])[0]
+        type_code = data[offset + 4]
+        offset += 5
+        return _unpack_ext(type_code, data[offset:offset + length]), offset + length
+
     raise ValueError(f"Unknown format marker: 0x{marker:02X}")
 
 
@@ -377,3 +573,50 @@ def _unpack_map(data: bytes, offset: int, length: int) -> tuple[dict, int]:
         value, offset = _unpack_value(data, offset)
         result[key] = value
     return result, offset
+
+
+def _unpack_ext(type_code: int, data: bytes) -> Any:
+    """Unpack an extension type value."""
+    if type_code == _EXT_DATETIME:
+        return datetime.fromisoformat(data.decode("utf-8"))
+
+    if type_code == _EXT_DATE:
+        return date.fromisoformat(data.decode("utf-8"))
+
+    if type_code == _EXT_TIME:
+        return time.fromisoformat(data.decode("utf-8"))
+
+    if type_code == _EXT_TIMEDELTA:
+        seconds = struct.unpack(">d", data)[0]
+        return timedelta(seconds=seconds)
+
+    if type_code == _EXT_DECIMAL:
+        return Decimal(data.decode("utf-8"))
+
+    if type_code == _EXT_UUID:
+        return UUID(bytes=data)
+
+    if type_code == _EXT_SET:
+        items, _ = _unpack_value(data, 0)
+        return set(items)
+
+    if type_code == _EXT_TUPLE:
+        items, _ = _unpack_value(data, 0)
+        return tuple(items)
+
+    if type_code == _EXT_FROZENSET:
+        items, _ = _unpack_value(data, 0)
+        return frozenset(items)
+
+    if type_code == _EXT_ENUM:
+        enum_data, _ = _unpack_value(data, 0)
+        # Return as dict with enum info (cannot reconstruct without class)
+        return {
+            "__enum__": True,
+            "module": enum_data["module"],
+            "class": enum_data["class"],
+            "name": enum_data["name"],
+            "value": enum_data["value"],
+        }
+
+    raise ValueError(f"Unknown extension type: {type_code}")

@@ -240,10 +240,6 @@ class TestErrors:
         with pytest.raises(TypeError):
             fastpack.pack(object())
 
-    def test_unsupported_set(self):
-        with pytest.raises(TypeError):
-            fastpack.pack({1, 2, 3})
-
 
 class TestBinarySize:
     """Test that binary output is compact."""
